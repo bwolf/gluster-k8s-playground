@@ -1,0 +1,256 @@
+#+TITLE: Gluster file system with Kubernetes
+#+AUTHOR: Marcus Geiger
+#+DATE: <2019-12-28 Sat>
+#+LANGUAGE: en
+#+OPTIONS: ':nil *:t -:t ::t <:t H:3 \n:nil ^:t arch:headline author:t
+#+OPTIONS: broken-links:nil c:nil creator:nil d:(not "LOGBOOK") date:t e:t
+#+OPTIONS: email:nil f:t inline:t num:t p:nil pri:nil prop:nil stat:t tags:t
+#+OPTIONS: tasks:t tex:t timestamp:t title:t toc:t todo:t |:t
+
+This project is a playground to experiment with Gluster and Kubernetes. It
+provides a virtual environment using Vagrant (and VirtualBox) to create three
+storage VMs (building the storage cluster) and a single Kubernetes instance and
+how to setup Gluster storage and how to consume it from Kubernetes.
+
+* Bringing up Gluster
+#+BEGIN_SRC sh
+  vagrant up stor1 stor2 stor3
+#+END_SRC
+
+Add nodes to the Gluster peer:
+#+BEGIN_SRC sh
+  vagrant ssh stor1
+  sudo gluster peer probe stor2
+  sudo gluster peer probe stor3
+#+END_SRC
+
+Setup the Gluster volume using 3 replicas:
+#+BEGIN_SRC sh
+  sudo gluster volume create gv_first replica 3 \
+       stor1:/data/glusterfs/lv_first/brick \
+       stor2:/data/glusterfs/lv_first/brick \
+       stor3:/data/glusterfs/lv_first/brick
+#+END_SRC
+
+Gluster prints ~volume create: gv_first: success: please start the volume to access
+data~ if successful.
+
+Display the volume info:
+#+BEGIN_SRC sh
+  sudo gluster volume info
+#+END_SRC
+
+:Output:
+#+BEGIN_EXAMPLE
+  Volume Name: gv_first
+  Type: Replicate
+  Volume ID: f624417f-0cdb-4783-842a-f5a69f0f30b9
+  Status: Created
+  Snapshot Count: 0
+  Number of Bricks: 1 x 3 = 3
+  Transport-type: tcp
+  Bricks:
+  Brick1: stor1:/data/glusterfs/lv_first/brick
+  Brick2: stor2:/data/glusterfs/lv_first/brick
+  Brick3: stor3:/data/glusterfs/lv_first/brick
+  Options Reconfigured:
+  transport.address-family: inet
+  storage.fips-mode-rchecksum: on
+  nfs.disable: on
+  performance.client-io-threads: off
+#+END_EXAMPLE
+:END:
+
+Start the volume:
+#+BEGIN_SRC sh
+  sudo gluster volume start gv_first
+#+END_SRC
+
+Gluster prints ~volume start: gv_first: success~ if successful.
+
+Again show the volume info:
+#+BEGIN_SRC sh
+  sudo gluster volume info
+#+END_SRC
+
+:Output:
+#+BEGIN_EXAMPLE
+  Volume Name: gv_first
+  Type: Replicate
+  Volume ID: f624417f-0cdb-4783-842a-f5a69f0f30b9
+  Status: Started
+  Snapshot Count: 0
+  Number of Bricks: 1 x 3 = 3
+  Transport-type: tcp
+  Bricks:
+  Brick1: stor1:/data/glusterfs/lv_first/brick
+  Brick2: stor2:/data/glusterfs/lv_first/brick
+  Brick3: stor3:/data/glusterfs/lv_first/brick
+  Options Reconfigured:
+  transport.address-family: inet
+  storage.fips-mode-rchecksum: on
+  nfs.disable: on
+  performance.client-io-threads: off
+#+END_EXAMPLE
+:END:
+
+Mounting the volume (the server specified in the mount command is used to fetch
+the cluster configuration and subsequent communication from the client is
+performed ac cross the whole cluster with fail over):
+#+BEGIN_SRC sh
+  mount -t glusterfs stor1:/gv_first /mnt
+#+END_SRC
+
+Now play around, put and remove files from the mount point and watch the files
+coming and going in other bricks.
+* Bringing up Kubernetes
+#+BEGIN_SRC sh
+  vagrant ssh kube
+#+END_SRC
+
+Pull the images, bootstrap the master for use with /Weave Net/,
+#+BEGIN_SRC sh
+  sudo kubeadm config images pull
+  sudo kubeadm init --apiserver-advertise-address=192.168.202.245
+#+END_SRC
+
+Copy credentials to the regular user account:
+#+BEGIN_SRC sh
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+#+END_SRC
+
+Install the /Weave Net/ pod network add-on:
+#+BEGIN_SRC sh
+  kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
+#+END_SRC
+
+Taint the (master) node:
+#+BEGIN_SRC sh
+  kubectl taint nodes --all node-role.kubernetes.io/master-
+#+END_SRC
+* Using Gluster from Kubernetes
+Following this [[https://github.com/kubernetes/examples/tree/master/volumes/glusterfs][guide]] , the prerequisite for mounting Gluster volumes, is to have
+the ~glusterfs-client~ package installed on the Kubernetes nodes (already done
+via Ansible playbooks).
+
+create the file ~glusterfs-endpoints.json~ in the VM ~kube~:
+:glusterfs-endpoints:
+#+BEGIN_SRC json
+  {
+    "kind": "Endpoints",
+    "apiVersion": "v1",
+    "metadata": {
+      "name": "glusterfs-cluster"
+    },
+    "subsets": [
+      {
+        "addresses": [
+          {
+            "ip": "192.168.202.201"
+          }
+        ],
+        "ports": [
+          {
+            "port": 1
+          }
+        ]
+      },
+      {
+        "addresses": [
+          {
+            "ip": "192.168.202.202"
+          }
+        ],
+        "ports": [
+          {
+            "port": 1
+          }
+        ]
+      },
+      {
+        "addresses": [
+          {
+            "ip": "192.168.202.203"
+          }
+        ],
+        "ports": [
+          {
+            "port": 1
+          }
+        ]
+      }
+    ]
+  }
+#+END_SRC
+:END:
+
+Apply the Gluster definition to Kubernetes:
+#+BEGIN_SRC sh
+  kubectl create -f glusterfs-endpoints.json
+#+END_SRC
+
+Verify the endpoints:
+#+BEGIN_SRC sh
+  kubectl get endpoints
+#+END_SRC
+
+Create the file ~glusterfs-service.json~ in the VM ~kube~:
+:glusterfs-service:
+#+BEGIN_SRC json
+  {
+    "kind": "Service",
+    "apiVersion": "v1",
+    "metadata": {
+      "name": "glusterfs-cluster"
+    },
+    "spec": {
+      "ports": [
+        {"port": 1}
+      ]
+    }
+  }
+#+END_SRC
+:END:
+
+Create a service for these endpoints, so that they will persist:
+#+BEGIN_SRC sh
+  kubectl create -f glusterfs-service.json
+#+END_SRC
+
+Create the file ~demo-pod.yaml~ in the VM ~kube~ to demonstrate how to consume a
+Gluster volume in a POD:
+:demo-pod:
+#+BEGIN_SRC yaml
+  ---
+  apiVersion: v1
+  kind: Pod
+  metadata:
+    name: demo-pod
+  spec:
+    containers:
+    - name: demo
+      image: nginx
+      volumeMounts:
+      - mountPath: "/mnt/glusterfs"
+        name: glusterfsvol
+    volumes:
+    - name: glusterfsvol
+      glusterfs:
+        endpoints: glusterfs-cluster
+        path: gv_first
+        readOnly: true
+#+END_SRC
+:END:
+
+Verify the volume is mounted:
+#+BEGIN_SRC sh
+  kubectl exec demo-pod -- mount | grep gluster
+#+END_SRC
+
+:Output:
+#+BEGIN_EXAMPLE
+  192.168.202.201:gv_first on /mnt/glusterfs type fuse.glusterfs (ro,relatime,user_id=0,group_id=0,default_permissions,allow_other,max_read=131072)
+#+END_EXAMPLE
+:END:

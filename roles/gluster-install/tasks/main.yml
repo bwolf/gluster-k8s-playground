@@ -1,0 +1,22 @@
+- name: Add the Gluster APT key
+  apt_key:
+    url: https://download.gluster.org/pub/gluster/glusterfs/7/rsa.pub
+    id: 'F9C958A3AEE0D2184FAD1CBD43607F0DC2F8238C'
+    state: present
+
+- name: Add the Gluster APT repository
+  apt_repository:
+    repo: deb https://download.gluster.org/pub/gluster/glusterfs/LATEST/Debian/10/amd64/apt buster main
+    filename: gluster
+    update_cache: yes
+
+- name: Install the Gluster package
+  apt:
+    name: glusterfs-server
+    force_apt_get: yes
+
+- name: Enable the Gluster service glusterd
+  systemd:
+    name: glusterd
+    state: started
+    enabled: yes

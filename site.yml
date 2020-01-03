@@ -1,0 +1,19 @@
+---
+- name: Common Plays
+  hosts: all
+  roles:
+    - fixed-etc-hosts
+
+- name: Storage Plays
+  become: yes
+  hosts: storage
+  roles:
+    - gluster-vol1
+    - gluster-install
+
+- name: Kubernetes Plays
+  become: yes
+  hosts: k8s
+  roles:
+    - gluster-client-install
+    - k8s-install

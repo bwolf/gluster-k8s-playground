@@ -1,0 +1,3 @@
+- name: Create static /etc/hosts file for all Vagrant boxes
+  become: yes
+  copy: src=hosts dest=/etc/hosts

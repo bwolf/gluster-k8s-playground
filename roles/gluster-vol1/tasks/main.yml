@@ -1,0 +1,38 @@
+- name: Install required disk partition and LVM packages
+  apt:
+    name: ["parted", "lvm2"]
+    force_apt_get: yes
+
+- name: Prepare the storage disk partition 1 for LVM
+  parted:
+    device: /dev/sdb
+    number: 1
+    flags: [lvm]
+    state: present
+
+- name: Create PV / VG on /dev/sdb1
+  lvg: vg=vg0 pvs=/dev/sdb1
+
+- name: Create first LV with 100 MiB
+  lvol: vg=vg0 lv=lv_first size=100m
+
+- name: Make the first storage file system
+  filesystem: dev=/dev/mapper/vg0-lv_first fstype=ext4
+
+# Naming scheme for one brick per device
+- name: Make the storage file system mount point
+  file: >
+    path=/data/glusterfs/lv_first
+    state=directory owner=root group=root mode='0755'
+
+- name: Mount the storage file system
+  mount: >
+    path=/data/glusterfs/lv_first
+    src=/dev/mapper/vg0-lv_first
+    fstype=ext4 opts=user_xattr passno='2' state=mounted
+
+# The brick directory inside of the filesystem avoid erros if the filesystem is not mounted
+- name: Make the brick working directory in the storage file system
+  file: >
+    path=/data/glusterfs/lv_first/brick
+    state=directory owner=root group=root mode='0755'

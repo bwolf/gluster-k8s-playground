@@ -1,0 +1,91 @@
+- name: Install iptables
+  apt:
+    name: iptables
+    force_apt_get: yes
+
+- name: Enable the br_netfilter kernel module
+  modprobe: name=br_netfilter
+
+- name: Enable bridge-nf-call-iptables
+  sysctl:
+    name: net.bridge.bridge-nf-call-iptables
+    value: '1'
+    sysctl_file: /etc/sysctl.d/bridge-nf-call-iptables.conf
+    sysctl_set: yes
+
+- name: Install required packages
+  apt:
+    name: ["apt-transport-https", "ca-certificates", "curl", "gnupg2", "software-properties-common"]
+    force_apt_get: yes
+
+- name: Remove swap space online
+  command: swapoff -a
+
+- name: Remove swap space persistently
+  lineinfile:
+    path: /etc/fstab
+    regexp: '^UUID=[a-z0-9-]+\s+none\s+swap'
+    state: absent
+
+- name: Remove swap space persistently / part 2
+  lineinfile:
+    path: /etc/fstab
+    regexp: '^# swap was on'
+    state: absent
+
+
+- name: Add the Docker APT key
+  apt_key:
+    url: https://download.docker.com/linux/debian/gpg
+    id: '9DC858229FC7DD38854AE2D88D81803C0EBFCD88'
+
+- name: Add the Docker APT repository
+  apt_repository:
+    repo: deb https://download.docker.com/linux/debian buster stable
+    filename: docker
+    update_cache: yes
+
+- name: Install Docker-CE
+  apt:
+    name: docker-ce=18.06.2~ce~3-0~debian
+    force_apt_get: yes
+
+- name: Set Docker-CE package on hold
+  command: apt-mark hold docker-ce
+
+- name: Install Docker-CE required packages (runtime)
+  apt: name=git force_apt_get=yes
+
+- name: Add the vagrant user to the docker group
+  user:
+    name: vagrant
+    append: yes
+    groups: ["docker"]
+
+- name: Configure Docker-CE for use with Kubernetes
+  copy: src=docker-daemon.json dest=/etc/docker/daemon.json
+
+- name: Restart Docker-CE
+  systemd:
+    daemon_reload: yes
+    name: docker
+    state: restarted
+
+- name: Add the Kubernetes APT key
+  apt_key:
+    url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+    id: '54A647F9048D5688D7DA2ABE6A030B21BA07F4FB'
+
+- name: Add the Docker APT repository
+  apt_repository:
+    repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+    filename: kubernetes
+    update_cache: yes
+
+- name: Install Kubernetes packages
+  apt:
+    name: ["kubelet", "kubeadm", "kubectl"]
+    force_apt_get: yes
+
+- name: Set Kubernetes packages on hold
+  command: apt-mark hold kubelet kubeadm kubectl
